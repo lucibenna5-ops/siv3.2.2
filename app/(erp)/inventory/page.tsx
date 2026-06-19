@@ -7,6 +7,23 @@ import { toast } from '@/hooks/use-toast';
 import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse } from 'lucide-react';
 import type { Product, Category, Brand, Warehouse as WarehouseType } from '@/lib/types';
 
+function StockByWarehouse({ productId, warehouses, inventoryByWarehouse }: { productId: string; warehouses: WarehouseType[]; inventoryByWarehouse: Record<string, Record<string, number>> }) {
+  const stockByWh = inventoryByWarehouse[productId] || {};
+  return (
+    <div className="text-xs space-y-0.5">
+      {warehouses.map(w => {
+        const qty = stockByWh[w.id] || 0;
+        return (
+          <div key={w.id} className="flex justify-between gap-2">
+            <span className="text-muted-foreground">{w.name}:</span>
+            <span className={qty > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}>{qty}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface ProductWithStock extends Omit<Product, 'category' | 'brand'> {
   total_stock?: number;
   category?: { name: string };
@@ -18,9 +35,12 @@ export default function InventoryPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseType[]>([]);
+  const [inventoryByWarehouse, setInventoryByWarehouse] = useState<Record<string, Record<string, number>>>({}); // productId -> warehouseId -> qty
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
+  const [filterBrand, setFilterBrand] = useState('');
+  const [filterWarehouse, setFilterWarehouse] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductWithStock | null>(null);
@@ -35,13 +55,17 @@ export default function InventoryPage() {
       supabase.from('products').select('*, category:categories(name), brand:brands(name)').order('created_at', { ascending: false }),
       supabase.from('categories').select('*').eq('is_active', true),
       supabase.from('brands').select('*').eq('is_active', true),
-      supabase.from('inventory_items').select('product_id, quantity_on_hand'),
+      supabase.from('inventory_items').select('product_id, warehouse_id, quantity_on_hand'),
       supabase.from('warehouses').select('*').eq('is_active', true).order('is_default', { ascending: false }),
     ]);
 
+    // Build stock map by product and warehouse
     const stockMap: Record<string, number> = {};
+    const byWarehouse: Record<string, Record<string, number>> = {};
     (invRes.data || []).forEach((i: any) => {
       stockMap[i.product_id] = (stockMap[i.product_id] || 0) + Number(i.quantity_on_hand);
+      if (!byWarehouse[i.product_id]) byWarehouse[i.product_id] = {};
+      byWarehouse[i.product_id][i.warehouse_id] = Number(i.quantity_on_hand);
     });
 
     const prods = (prodRes.data || []).map((p: any) => ({
@@ -53,6 +77,7 @@ export default function InventoryPage() {
     setCategories(catRes.data || []);
     setBrands(brandRes.data || []);
     setWarehouses(whRes.data || []);
+    setInventoryByWarehouse(byWarehouse);
 
     const activeProds = prods.filter((p: any) => p.is_active);
     const lowStock = activeProds.filter((p: any) => (p.total_stock || 0) > 0 && (p.total_stock || 0) <= p.min_stock_level).length;
@@ -66,12 +91,14 @@ export default function InventoryPage() {
   const filtered = products.filter(p => {
     const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase());
     const matchCat = !filterCategory || p.category_id === filterCategory;
+    const matchBrand = !filterBrand || p.brand_id === filterBrand;
+    const matchWarehouse = !filterWarehouse || (inventoryByWarehouse[p.id]?.[filterWarehouse] || 0) > 0;
     const matchStatus = !filterStatus || (
       filterStatus === 'low' ? (p.total_stock || 0) <= p.min_stock_level && (p.total_stock || 0) > 0 :
       filterStatus === 'out' ? (p.total_stock || 0) === 0 :
       filterStatus === 'ok' ? (p.total_stock || 0) > p.min_stock_level : true
     );
-    return matchSearch && matchCat && matchStatus;
+    return matchSearch && matchCat && matchBrand && matchWarehouse && matchStatus;
   });
 
   function getStockBadge(qty: number, min: number) {
@@ -141,6 +168,14 @@ export default function InventoryPage() {
           <option value="">All Categories</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        <select value={filterBrand} onChange={e => setFilterBrand(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+          <option value="">All Brands</option>
+          {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <select value={filterWarehouse} onChange={e => setFilterWarehouse(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+          <option value="">All Warehouses</option>
+          {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
           <option value="">All Status</option>
           <option value="ok">In Stock</option>
@@ -204,9 +239,15 @@ export default function InventoryPage() {
                     <td className="px-4 py-3 text-sm text-foreground">{p.category?.name || '—'}</td>
                     <td className="px-4 py-3 text-sm text-foreground">{p.brand?.name || '—'}</td>
                     <td className="px-4 py-3 text-right">
-                      <span className={`text-sm font-bold ${(p.total_stock || 0) === 0 ? 'text-red-500' : (p.total_stock || 0) <= p.min_stock_level ? 'text-amber-500' : 'text-foreground'}`}>
-                        {p.total_stock || 0}
-                      </span>
+                      <div className="group relative">
+                        <span className={`text-sm font-bold cursor-help ${(p.total_stock || 0) === 0 ? 'text-red-500' : (p.total_stock || 0) <= p.min_stock_level ? 'text-amber-500' : 'text-foreground'}`}>
+                          {p.total_stock || 0}
+                        </span>
+                        <div className="absolute right-0 top-full mt-1 bg-white border border-border rounded-lg shadow-lg p-3 z-10 hidden group-hover:block min-w-[180px]">
+                          <p className="text-xs font-semibold mb-2 text-foreground">Stock by Location:</p>
+                          <StockByWarehouse productId={p.id} warehouses={warehouses} inventoryByWarehouse={inventoryByWarehouse} />
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-foreground">{formatCurrency(p.cost_price)}</td>
                     <td className="px-4 py-3 text-sm text-right font-semibold text-foreground">{formatCurrency(p.sale_price)}</td>
