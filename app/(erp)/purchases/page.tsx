@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Plus, Search, Eye, X, Trash2, CheckCircle, Truck, DollarSign, CreditCard, Printer } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, CircleCheck as CheckCircle, Truck, DollarSign, CreditCard, Printer } from 'lucide-react';
 import type { PurchaseOrder, PurchaseOrderStatus, Supplier, Product, PaymentMethod } from '@/lib/types';
 
 const statusConfig: Record<PurchaseOrderStatus, { label: string; color: string; bg: string }> = {
@@ -563,11 +563,11 @@ function ViewPOModal({ order, items, onClose, onUpdateStatus, onRecordPayment }:
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="print-modal bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white">
           <h2 className="text-base font-bold">Purchase Order {order.po_number}</h2>
-          <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-muted transition">
+          <div className="no-print flex items-center gap-2">
+            <button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-muted transition">
               <Printer className="w-4 h-4" />Print
             </button>
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
@@ -648,7 +648,7 @@ function ViewPOModal({ order, items, onClose, onUpdateStatus, onRecordPayment }:
           </div>
 
           {order.status === 'draft' && (
-            <div className="flex gap-2">
+            <div className="no-print flex gap-2">
               <button onClick={() => onUpdateStatus('approved')} className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg text-sm font-semibold transition">
                 <CheckCircle className="w-4 h-4" />Approve Order
               </button>
@@ -656,7 +656,7 @@ function ViewPOModal({ order, items, onClose, onUpdateStatus, onRecordPayment }:
           )}
 
           {order.status === 'approved' && (
-            <div className="flex gap-2">
+            <div className="no-print flex gap-2">
               <button onClick={() => onUpdateStatus('received')} className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-sm font-semibold transition">
                 <Truck className="w-4 h-4" />Mark as Received
               </button>
@@ -664,7 +664,7 @@ function ViewPOModal({ order, items, onClose, onUpdateStatus, onRecordPayment }:
           )}
 
           {balance > 0 && (order.status === 'approved' || order.status === 'received' || order.status === 'partially_received') && (
-            <div className="flex gap-2 pt-2 border-t border-border">
+            <div className="no-print flex gap-2 pt-2 border-t border-border">
               <button onClick={onRecordPayment} className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg text-sm font-semibold transition">
                 <CreditCard className="w-4 h-4" />Record Payment
               </button>

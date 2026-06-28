@@ -93,11 +93,11 @@ export default function SalesPage() {
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="print-modal bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white">
             <h2 className="text-base font-bold">Invoice {invoice.invoice_number}</h2>
-            <div className="flex items-center gap-2">
-              <button className="flex items-center gap-1 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-muted transition">
+            <div className="flex items-center gap-2 no-print">
+              <button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-muted transition">
                 <Printer className="w-4 h-4" />Print
               </button>
               <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
@@ -186,7 +186,7 @@ export default function SalesPage() {
             </div>
 
             {invoice.status !== 'paid' && invoice.status !== 'cancelled' && invoice.status !== 'refunded' && (
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <div className="no-print flex items-center justify-end gap-2 pt-2 border-t border-border">
                 {invoice.status === 'draft' && (
                   <button onClick={() => onUpdateStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
                     <Send className="w-4 h-4" />Mark as Sent

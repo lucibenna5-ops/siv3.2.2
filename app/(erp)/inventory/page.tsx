@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import JsBarcode from 'jsbarcode';
+import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, Info, Settings, Barcode, Camera, Printer } from 'lucide-react';
 import type { Product, Category, Brand, Warehouse as WarehouseType, ProductColor, ProductSize, ProductUnit } from '@/lib/types';
 
 function StockByWarehouse({ productId, warehouses, inventoryByWarehouse }: { productId: string; warehouses: WarehouseType[]; inventoryByWarehouse: Record<string, Record<string, number>> }) {
@@ -28,6 +29,8 @@ interface ProductWithStock extends Omit<Product, 'category' | 'brand'> {
   total_stock?: number;
   category?: { name: string };
   brand?: { name: string };
+  product_colors?: { id: string; name: string; hex_code: string }[];
+  product_sizes?: { id: string; name: string }[];
 }
 
 export default function InventoryPage() {
@@ -42,21 +45,29 @@ export default function InventoryPage() {
   const [filterBrand, setFilterBrand] = useState('');
   const [filterWarehouse, setFilterWarehouse] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterColor, setFilterColor] = useState('');
+  const [filterSize, setFilterSize] = useState('');
+  const [allColors, setAllColors] = useState<{ id: string; name: string; hex_code: string }[]>([]);
+  const [allSizes, setAllSizes] = useState<{ id: string; name: string }[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductWithStock | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<ProductWithStock | null>(null);
+  const [barcodeProduct, setBarcodeProduct] = useState<ProductWithStock | null>(null);
+  const [showManageModal, setShowManageModal] = useState(false);
   const [stats, setStats] = useState({ total: 0, lowStock: 0, outOfStock: 0, value: 0 });
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
-    const [prodRes, catRes, brandRes, invRes, whRes] = await Promise.all([
-      supabase.from('products').select('*, category:categories(name), brand:brands(name)').order('created_at', { ascending: false }),
+    const [prodRes, catRes, brandRes, invRes, whRes, colorRes, sizeRes] = await Promise.all([
+      supabase.from('products').select('*, category:categories(name), brand:brands(name), product_colors(id, name, hex_code), product_sizes(id, name)').order('created_at', { ascending: false }),
       supabase.from('categories').select('*').eq('is_active', true),
       supabase.from('brands').select('*').eq('is_active', true),
       supabase.from('inventory_items').select('product_id, warehouse_id, quantity_on_hand'),
       supabase.from('warehouses').select('*').eq('is_active', true).order('is_default', { ascending: false }),
+      supabase.from('product_colors').select('id, name, hex_code').order('name'),
+      supabase.from('product_sizes').select('id, name').order('name'),
     ]);
 
     const stockMap: Record<string, number> = {};
@@ -78,6 +89,22 @@ export default function InventoryPage() {
     setWarehouses(whRes.data || []);
     setInventoryByWarehouse(byWarehouse);
 
+    const seenColors = new Set<string>();
+    const uniqueColors = (colorRes.data || []).filter((c: any) => {
+      if (seenColors.has(c.name)) return false;
+      seenColors.add(c.name);
+      return true;
+    });
+    setAllColors(uniqueColors);
+
+    const seenSizes = new Set<string>();
+    const uniqueSizes = (sizeRes.data || []).filter((s: any) => {
+      if (seenSizes.has(s.name)) return false;
+      seenSizes.add(s.name);
+      return true;
+    });
+    setAllSizes(uniqueSizes);
+
     const activeProds = prods.filter((p: any) => p.is_active);
     const lowStock = activeProds.filter((p: any) => (p.total_stock || 0) > 0 && (p.total_stock || 0) <= p.min_stock_level).length;
     const outOfStock = activeProds.filter((p: any) => (p.total_stock || 0) === 0).length;
@@ -97,7 +124,9 @@ export default function InventoryPage() {
       filterStatus === 'out' ? (p.total_stock || 0) === 0 :
       filterStatus === 'ok' ? (p.total_stock || 0) > p.min_stock_level : true
     );
-    return matchSearch && matchCat && matchBrand && matchWarehouse && matchStatus;
+    const matchColor = !filterColor || p.product_colors?.some(c => c.name === filterColor);
+    const matchSize = !filterSize || p.product_sizes?.some(s => s.name === filterSize);
+    return matchSearch && matchCat && matchBrand && matchWarehouse && matchStatus && matchColor && matchSize;
   });
 
   function getStockBadge(qty: number, min: number) {
@@ -125,13 +154,22 @@ export default function InventoryPage() {
           <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Manage products and stock levels</p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition"
-        >
-          <Plus className="w-4 h-4" />
-          Add Product
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowManageModal(true)}
+            className="flex items-center gap-2 border border-border hover:bg-muted text-foreground px-4 py-2 rounded-lg text-sm font-semibold transition"
+          >
+            <Settings className="w-4 h-4" />
+            Manage
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition"
+          >
+            <Plus className="w-4 h-4" />
+            Add Product
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -181,6 +219,18 @@ export default function InventoryPage() {
           <option value="low">Low Stock</option>
           <option value="out">Out of Stock</option>
         </select>
+        {allColors.length > 0 && (
+          <select value={filterColor} onChange={e => setFilterColor(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+            <option value="">All Colors</option>
+            {allColors.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+        )}
+        {allSizes.length > 0 && (
+          <select value={filterSize} onChange={e => setFilterSize(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+            <option value="">All Sizes</option>
+            {allSizes.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+        )}
         <button onClick={loadData} className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 text-sm hover:bg-muted transition">
           <RefreshCw className="w-3.5 h-3.5" />
           Refresh
@@ -253,6 +303,9 @@ export default function InventoryPage() {
                     <td className="px-4 py-3">{getStockBadge(p.total_stock || 0, p.min_stock_level)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => setBarcodeProduct(p)} title="View Barcode" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-muted-foreground hover:text-green-600 transition">
+                          <Barcode className="w-3.5 h-3.5" />
+                        </button>
                         <button onClick={() => setEditingProduct(p)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition">
                           <Edit className="w-3.5 h-3.5" />
                         </button>
@@ -277,6 +330,12 @@ export default function InventoryPage() {
       )}
       {deletingProduct && (
         <DeleteConfirmModal product={deletingProduct} onClose={() => setDeletingProduct(null)} onConfirm={handleDelete} />
+      )}
+      {barcodeProduct && (
+        <BarcodeModal product={barcodeProduct} onClose={() => setBarcodeProduct(null)} />
+      )}
+      {showManageModal && (
+        <ManageCatalogModal categories={categories} brands={brands} onClose={() => setShowManageModal(false)} onSaved={loadData} />
       )}
     </div>
   );
@@ -786,6 +845,161 @@ function DeleteConfirmModal({ product, onClose, onConfirm }: { product: ProductW
           <div className="flex gap-3">
             <button onClick={onClose} className="flex-1 px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
             <button onClick={onConfirm} className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BarcodeModal({ product, onClose }: { product: ProductWithStock; onClose: () => void }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    if (svgRef.current) {
+      try {
+        JsBarcode(svgRef.current, product.sku, {
+          format: 'CODE128',
+          width: 2,
+          height: 80,
+          displayValue: true,
+          fontSize: 14,
+          margin: 10,
+          background: '#ffffff',
+          lineColor: '#000000',
+        });
+      } catch (e) {
+        console.error('Barcode generation error:', e);
+      }
+    }
+  }, [product.sku]);
+
+  function handlePrint() {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const svgHTML = new XMLSerializer().serializeToString(svgEl);
+    const w = window.open('', '_blank', 'width=500,height=350');
+    if (!w) return;
+    w.document.write(`<!DOCTYPE html><html><head><title>Barcode - ${product.sku}</title></head><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;font-family:sans-serif;margin:0"><p style="margin:0 0 4px;font-size:13px;font-weight:600">${product.name}</p><p style="margin:0 0 12px;font-size:11px;color:#666">SKU: ${product.sku}</p>${svgHTML}<script>window.onload=function(){window.print();setTimeout(function(){window.close();},500);}<\/script></body></html>`);
+    w.document.close();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold">Product Barcode</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 flex flex-col items-center">
+          <p className="text-sm font-semibold text-foreground mb-0.5">{product.name}</p>
+          <p className="text-xs text-muted-foreground mb-4">SKU: {product.sku}</p>
+          <div className="border border-border rounded-lg p-4 bg-white w-full flex justify-center">
+            <svg ref={svgRef} />
+          </div>
+          <button
+            onClick={handlePrint}
+            className="mt-4 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition"
+          >
+            <Printer className="w-4 h-4" />Print Barcode
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManageCatalogModal({ categories, brands, onClose, onSaved }: {
+  categories: Category[];
+  brands: Brand[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [tab, setTab] = useState<'categories' | 'brands'>('categories');
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function handleAdd() {
+    if (!newName.trim()) return;
+    setSaving(true);
+    const table = tab === 'categories' ? 'categories' : 'brands';
+    const { error } = await supabase.from(table).insert({ name: newName.trim(), is_active: true });
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Success', description: `${tab === 'categories' ? 'Category' : 'Brand'} added` });
+      setNewName('');
+      onSaved();
+    }
+    setSaving(false);
+  }
+
+  async function handleDelete(id: string) {
+    const table = tab === 'categories' ? 'categories' : 'brands';
+    const { error } = await supabase.from(table).update({ is_active: false }).eq('id', id);
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Success', description: `${tab === 'categories' ? 'Category' : 'Brand'} deleted` });
+      onSaved();
+    }
+  }
+
+  const items = tab === 'categories' ? categories : brands;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold">Manage Catalog</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex border-b border-border">
+          <button
+            onClick={() => { setTab('categories'); setNewName(''); }}
+            className={`flex-1 py-3 text-sm font-medium transition ${tab === 'categories' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Categories ({categories.length})
+          </button>
+          <button
+            onClick={() => { setTab('brands'); setNewName(''); }}
+            className={`flex-1 py-3 text-sm font-medium transition ${tab === 'brands' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            Brands ({brands.length})
+          </button>
+        </div>
+        <div className="p-4">
+          <div className="flex gap-2 mb-4">
+            <input
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAdd()}
+              placeholder={`New ${tab === 'categories' ? 'category' : 'brand'} name...`}
+              className="flex-1 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+            <button
+              onClick={handleAdd}
+              disabled={saving || !newName.trim()}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+          <div className="space-y-1 max-h-64 overflow-y-auto">
+            {items.length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-6">No {tab} added yet. Add one above.</p>
+            ) : items.map(item => (
+              <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-muted/50 group">
+                <span className="text-sm text-foreground">{item.name}</span>
+                <button
+                  onClick={() => handleDelete(item.id)}
+                  className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition"
+                  title="Delete"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       </div>

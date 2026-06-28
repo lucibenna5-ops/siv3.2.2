@@ -146,3 +146,18 @@
 .animate-progress {
   animation: progress 0.8s ease-out forwards;
 }
+
+/* Print styles */
+@media print {
+  body * { visibility: hidden !important; }
+  .print-modal, .print-modal * { visibility: visible !important; }
+  .print-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    background: white !important;
+    z-index: 9999 !important;
+    padding: 2rem !important;
+    overflow: visible !important;
+  }
+  .no-print { display: none !important; }
+}
