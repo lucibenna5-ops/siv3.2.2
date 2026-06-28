@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 import JsBarcode from 'jsbarcode';
-import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, Info, Settings, Barcode, Camera, Printer } from 'lucide-react';
+import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, Info, Settings, Barcode, Camera, Printer, Download, Upload } from 'lucide-react';
 import type { Product, Category, Brand, Warehouse as WarehouseType, ProductColor, ProductSize, ProductUnit } from '@/lib/types';
 
 function StockByWarehouse({ productId, warehouses, inventoryByWarehouse }: { productId: string; warehouses: WarehouseType[]; inventoryByWarehouse: Record<string, Record<string, number>> }) {
@@ -55,6 +56,7 @@ export default function InventoryPage() {
   const [barcodeProduct, setBarcodeProduct] = useState<ProductWithStock | null>(null);
   const [showManageModal, setShowManageModal] = useState(false);
   const [stats, setStats] = useState({ total: 0, lowStock: 0, outOfStock: 0, value: 0 });
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -135,6 +137,86 @@ export default function InventoryPage() {
     return <span className="badge-status bg-green-50 text-green-600">In Stock</span>;
   }
 
+  function exportProducts() {
+    const rows = filtered.map((p, i) => ({
+      '#': i + 1,
+      Name: p.name,
+      SKU: p.sku,
+      Category: (p as any).category?.name || '',
+      Brand: (p as any).brand?.name || '',
+      Unit: p.unit || '',
+      'Cost Price': p.cost_price,
+      'Sale Price': p.sale_price,
+      'Min Stock Level': p.min_stock_level,
+      'Current Stock': p.total_stock || 0,
+      Description: (p as any).description || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Products');
+    XLSX.writeFile(wb, `inventory-${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast({ title: 'Exported', description: `${rows.length} products exported to Excel` });
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows: any[] = XLSX.utils.sheet_to_json(ws);
+
+        if (rows.length === 0) { toast({ title: 'Empty file', description: 'No rows found in the spreadsheet', variant: 'destructive' }); return; }
+
+        let imported = 0, skipped = 0;
+        for (const row of rows) {
+          const name = row['Name'] || row['name'];
+          const sku = row['SKU'] || row['sku'];
+          if (!name || !sku) { skipped++; continue; }
+
+          const catName = row['Category'] || row['category'];
+          const brandName = row['Brand'] || row['brand'];
+
+          let category_id = null;
+          if (catName) {
+            const cat = categories.find(c => c.name.toLowerCase() === catName.toLowerCase());
+            category_id = cat?.id || null;
+          }
+          let brand_id = null;
+          if (brandName) {
+            const br = brands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
+            brand_id = br?.id || null;
+          }
+
+          const { error } = await supabase.from('products').upsert({
+            name: String(name),
+            sku: String(sku),
+            unit: String(row['Unit'] || row['unit'] || 'pcs'),
+            cost_price: Number(row['Cost Price'] || row['cost_price'] || 0),
+            sale_price: Number(row['Sale Price'] || row['sale_price'] || 0),
+            min_stock_level: Number(row['Min Stock Level'] || row['min_stock_level'] || 0),
+            description: String(row['Description'] || row['description'] || ''),
+            category_id,
+            brand_id,
+            is_active: true,
+          }, { onConflict: 'sku' });
+
+          if (!error) imported++; else skipped++;
+        }
+        toast({ title: 'Import Complete', description: `${imported} products imported, ${skipped} skipped` });
+        loadData();
+      } catch (err: any) {
+        toast({ title: 'Import Failed', description: err.message || 'Invalid file format', variant: 'destructive' });
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
   async function handleDelete() {
     if (!deletingProduct) return;
     const { error } = await supabase.from('products').update({ is_active: false }).eq('id', deletingProduct.id);
@@ -154,14 +236,35 @@ export default function InventoryPage() {
           <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Manage products and stock levels</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setShowManageModal(true)}
-            className="flex items-center gap-2 border border-border hover:bg-muted text-foreground px-4 py-2 rounded-lg text-sm font-semibold transition"
+            className="flex items-center gap-2 border border-border hover:bg-muted text-foreground px-3 py-2 rounded-lg text-sm font-semibold transition"
           >
             <Settings className="w-4 h-4" />
             Manage
           </button>
+          <button
+            onClick={exportProducts}
+            className="flex items-center gap-2 border border-border hover:bg-muted text-foreground px-3 py-2 rounded-lg text-sm font-semibold transition"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="flex items-center gap-2 border border-border hover:bg-muted text-foreground px-3 py-2 rounded-lg text-sm font-semibold transition"
+          >
+            <Upload className="w-4 h-4" />
+            Import
+          </button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={handleImport}
+          />
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition"

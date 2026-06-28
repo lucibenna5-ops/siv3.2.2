@@ -48,19 +48,22 @@ export default function SalesPage() {
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentInvoice, setPaymentInvoice] = useState<InvoiceWithCustomer | null>(null);
+  const [companySettings, setCompanySettings] = useState<any>({ name: '', address: '', phone: '', email: '', logo_url: '' });
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
-    const [invRes, custRes, prodRes] = await Promise.all([
+    const [invRes, custRes, prodRes, settingsRes] = await Promise.all([
       supabase.from('invoices').select('*, customer:customers(name, code, phone, address)').order('created_at', { ascending: false }),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select(`*, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(quantity_on_hand)`).eq('is_active', true).order('name'),
+      supabase.from('app_settings').select('setting_value').eq('setting_key', 'company').maybeSingle(),
     ]);
     setInvoices(invRes.data || []);
     setCustomers(custRes.data || []);
     setProducts(prodRes.data || []);
+    if (settingsRes.data?.setting_value) setCompanySettings(settingsRes.data.setting_value);
 
     const allInv = invRes.data || [];
     setStats({
@@ -89,117 +92,170 @@ export default function SalesPage() {
     onUpdateStatus: (status: InvoiceStatus) => void;
   }) {
     const cfg = statusConfig[invoice.status as InvoiceStatus] || statusConfig.draft;
-    const balance = invoice.balance_due || (invoice.total_amount - invoice.amount_paid);
+    const balance = Number(invoice.balance_due ?? (Number(invoice.total_amount) - Number(invoice.amount_paid)));
+    const discountTotal = items.reduce((s, item) => s + (item.quantity * item.unit_price * (item.discount_percent || 0) / 100), 0);
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="print-modal bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white">
-            <h2 className="text-base font-bold">Invoice {invoice.invoice_number}</h2>
-            <div className="flex items-center gap-2 no-print">
-              <button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-muted transition">
-                <Printer className="w-4 h-4" />Print
+        <div className="print-modal bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+
+          {/* Toolbar */}
+          <div className="no-print flex items-center justify-between px-6 py-3 border-b border-border sticky top-0 bg-white z-10">
+            <span className="text-sm font-semibold text-muted-foreground">Invoice Preview</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+                <Printer className="w-3.5 h-3.5" />Print / PDF
               </button>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+              <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1"><X className="w-5 h-5" /></button>
             </div>
           </div>
 
-          <div className="p-6 space-y-6">
-            <div className="flex justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">Customer</p>
-                <p className="font-semibold text-foreground">{invoice.customer?.name || '-'}</p>
-                <p className="text-sm text-muted-foreground">{invoice.customer?.phone || '-'}</p>
+          {/* Invoice body */}
+          <div className="p-8 space-y-8">
+
+            {/* Header: Company + INVOICE title */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-4">
+                {companySettings.logo_url && (
+                  <img src={companySettings.logo_url} alt="Logo" className="h-14 w-14 object-contain rounded-lg" />
+                )}
+                <div>
+                  <h1 className="text-xl font-bold text-foreground">{companySettings.name || 'Your Company'}</h1>
+                  {companySettings.address && <p className="text-xs text-muted-foreground mt-0.5 max-w-xs">{companySettings.address}</p>}
+                  <div className="flex flex-wrap gap-3 mt-1">
+                    {companySettings.phone && <p className="text-xs text-muted-foreground">{companySettings.phone}</p>}
+                    {companySettings.email && <p className="text-xs text-muted-foreground">{companySettings.email}</p>}
+                  </div>
+                </div>
               </div>
               <div className="text-right">
-                <p className="text-xs text-muted-foreground">Status</p>
-                <span className={`badge-status ${cfg.bg} ${cfg.color}`}>{cfg.label}</span>
+                <p className="text-4xl font-black text-blue-600 tracking-tight">INVOICE</p>
+                <p className="text-base font-bold text-foreground mt-1">#{invoice.invoice_number}</p>
+                <span className={`badge-status ${cfg.bg} ${cfg.color} mt-2 inline-flex`}>{cfg.label}</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 py-3 border-y border-border">
-              <div>
-                <p className="text-xs text-muted-foreground">Invoice Date</p>
-                <p className="text-sm font-medium">{formatDate(invoice.invoice_date)}</p>
+            {/* Bill To + Invoice Meta */}
+            <div className="grid grid-cols-2 gap-6">
+              <div className="bg-slate-50 rounded-xl p-4 border border-border">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Bill To</p>
+                <p className="font-bold text-foreground">{invoice.customer?.name || '—'}</p>
+                {invoice.customer?.phone && <p className="text-sm text-muted-foreground mt-0.5">{invoice.customer.phone}</p>}
+                {invoice.customer?.address && <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{invoice.customer.address}</p>}
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Due Date</p>
-                <p className="text-sm font-medium">{invoice.due_date ? formatDate(invoice.due_date) : '-'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Amount Paid</p>
-                <p className="text-sm font-medium text-green-600">{formatCurrency(invoice.amount_paid)}</p>
+              <div className="bg-slate-50 rounded-xl p-4 border border-border space-y-2.5">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">Details</p>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Invoice Date</span>
+                  <span className="text-xs font-semibold">{formatDate(invoice.invoice_date)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Due Date</span>
+                  <span className="text-xs font-semibold">{invoice.due_date ? formatDate(invoice.due_date) : 'On receipt'}</span>
+                </div>
+                <div className="flex justify-between items-center pt-1.5 border-t border-border">
+                  <span className="text-xs text-muted-foreground">Balance Due</span>
+                  <span className={`text-sm font-bold ${balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {formatCurrency(balance)}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div>
-              <p className="text-xs font-medium mb-2">Items</p>
-              <div className="border border-border rounded-lg overflow-hidden">
-                <table className="w-full">
-                  <thead className="bg-muted/40">
-                    <tr>
-                      <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Product</th>
-                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Qty</th>
-                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Price</th>
-                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Total</th>
+            {/* Items table */}
+            <div className="border border-border rounded-xl overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-border">
+                    <th className="text-left text-xs font-semibold text-muted-foreground px-4 py-3 w-8">#</th>
+                    <th className="text-left text-xs font-semibold text-muted-foreground px-4 py-3">Product</th>
+                    <th className="text-right text-xs font-semibold text-muted-foreground px-4 py-3">Qty</th>
+                    <th className="text-right text-xs font-semibold text-muted-foreground px-4 py-3">Unit Price</th>
+                    <th className="text-right text-xs font-semibold text-muted-foreground px-4 py-3">Disc</th>
+                    <th className="text-right text-xs font-semibold text-muted-foreground px-4 py-3">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {items.length === 0 ? (
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-sm text-muted-foreground">No items</td></tr>
+                  ) : items.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{idx + 1}</td>
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-medium text-foreground">{item.product?.name || '—'}</p>
+                        {item.unit_name && <p className="text-xs text-muted-foreground">{item.unit_name}</p>}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-foreground">
+                        {item.quantity}{item.unit_name ? ` ${item.unit_name}` : ''}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right">{formatCurrency(item.unit_price)}</td>
+                      <td className="px-4 py-3 text-sm text-right text-amber-600">
+                        {(item.discount_percent || 0) > 0 ? `${item.discount_percent}%` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-semibold">{formatCurrency(item.subtotal)}</td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {items.length === 0 ? (
-                      <tr><td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">No items</td></tr>
-                    ) : items.map((item, idx) => (
-                      <tr key={idx}>
-                        <td className="px-3 py-2 text-sm">
-                          {item.product?.name || '-'}
-                          {item.unit_name && <span className="text-xs text-muted-foreground ml-1">({item.unit_name})</span>}
-                        </td>
-                        <td className="px-3 py-2 text-sm text-right">
-                          {item.quantity}{item.unit_name ? ` ${item.unit_name}` : ''}
-                          {item.base_quantity && item.unit_conversion_factor > 1 && (
-                            <span className="text-[10px] text-muted-foreground block">{item.base_quantity} base</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-sm text-right">{formatCurrency(item.unit_price)}</td>
-                        <td className="px-3 py-2 text-sm text-right font-semibold">{formatCurrency(item.subtotal)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
-            <div className="flex justify-end bg-muted/30 rounded-lg p-4">
-              <div className="w-48 space-y-2">
+            {/* Totals */}
+            <div className="flex justify-end">
+              <div className="w-72 bg-slate-50 rounded-xl border border-border p-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Subtotal</span>
-                  <span>{formatCurrency(invoice.subtotal)}</span>
+                  <span>{formatCurrency(Number(invoice.subtotal) + discountTotal)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Paid</span>
-                  <span className="text-green-600">{formatCurrency(invoice.amount_paid)}</span>
+                {discountTotal > 0 && (
+                  <div className="flex justify-between text-sm text-amber-600">
+                    <span>Discount</span>
+                    <span>-{formatCurrency(discountTotal)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm font-semibold border-t border-border pt-2">
+                  <span>Invoice Total</span>
+                  <span>{formatCurrency(invoice.total_amount)}</span>
+                </div>
+                <div className="flex justify-between text-sm text-green-600">
+                  <span>Amount Paid</span>
+                  <span>-{formatCurrency(invoice.amount_paid)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-base border-t border-border pt-2">
                   <span>Balance Due</span>
-                  <span className="text-red-600">{formatCurrency(balance)}</span>
+                  <span className={balance > 0 ? 'text-red-600' : 'text-green-600'}>{formatCurrency(balance)}</span>
                 </div>
               </div>
             </div>
 
-            {invoice.status !== 'paid' && invoice.status !== 'cancelled' && invoice.status !== 'refunded' && (
-              <div className="no-print flex items-center justify-end gap-2 pt-2 border-t border-border">
-                {invoice.status === 'draft' && (
-                  <button onClick={() => onUpdateStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
-                    <Send className="w-4 h-4" />Mark as Sent
-                  </button>
-                )}
-                {balance > 0 && (invoice.status === 'sent' || invoice.status === 'partially_paid') && (
-                  <button onClick={onRecordPayment} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition">
-                    <CreditCard className="w-4 h-4" />Record Payment
-                  </button>
-                )}
+            {/* Notes */}
+            {(invoice as any).notes && (
+              <div className="border-t border-dashed border-border pt-4">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">Notes</p>
+                <p className="text-sm text-muted-foreground">{(invoice as any).notes}</p>
               </div>
             )}
+
+            {/* Footer text */}
+            <div className="border-t border-dashed border-border pt-4 text-center">
+              <p className="text-xs text-muted-foreground">Thank you for your business!</p>
+            </div>
           </div>
+
+          {/* Action buttons (hidden on print) */}
+          {invoice.status !== 'paid' && invoice.status !== 'cancelled' && invoice.status !== 'refunded' && (
+            <div className="no-print flex items-center justify-end gap-2 px-8 py-4 border-t border-border">
+              {invoice.status === 'draft' && (
+                <button onClick={() => onUpdateStatus('sent')} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
+                  <Send className="w-4 h-4" />Mark as Sent
+                </button>
+              )}
+              {balance > 0 && (invoice.status === 'sent' || invoice.status === 'partially_paid') && (
+                <button onClick={onRecordPayment} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition">
+                  <CreditCard className="w-4 h-4" />Record Payment
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );

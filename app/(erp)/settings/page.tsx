@@ -15,6 +15,7 @@ interface CompanySettings {
   address: string;
   currency: string;
   dateFormat: string;
+  logo_url: string;
 }
 
 interface NotificationSettings {
@@ -55,6 +56,7 @@ export default function SettingsPage() {
     address: '',
     currency: 'BDT',
     dateFormat: 'DD/MM/YYYY',
+    logo_url: '',
   });
   const [notifications, setNotifications] = useState<NotificationSettings>({
     lowStock: true,
@@ -293,6 +295,21 @@ export default function SettingsPage() {
                       onChange={e => setCompany({ ...company, address: e.target.value })}
                       className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium mb-1">Company Logo URL</label>
+                    <input
+                      value={company.logo_url}
+                      onChange={e => setCompany({ ...company, logo_url: e.target.value })}
+                      placeholder="https://example.com/logo.png"
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                    {company.logo_url && (
+                      <div className="mt-2 flex items-center gap-3">
+                        <img src={company.logo_url} alt="Logo preview" className="h-10 w-10 object-contain rounded border border-border" />
+                        <p className="text-xs text-muted-foreground">Logo preview</p>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

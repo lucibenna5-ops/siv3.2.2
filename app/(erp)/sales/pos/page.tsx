@@ -170,6 +170,12 @@ export default function POSPage() {
     setCart(prev => prev.filter(i => !(i.id === id && (unitId ? i.selected_unit?.id === unitId : true))));
   }
 
+  function updateCartPrice(id: string, unitId: string | undefined, newPrice: number) {
+    setCart(prev => prev.map(i =>
+      (i.id === id && i.selected_unit?.id === unitId) ? { ...i, unit_price: newPrice } : i
+    ));
+  }
+
   const subtotal = cart.reduce((s, i) => s + i.unit_price * i.quantity, 0);
   const discountAmount = (subtotal * discount) / 100;
   const total = subtotal - discountAmount;
@@ -394,10 +400,18 @@ export default function POSPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] font-semibold text-foreground truncate">{item.name}</p>
-                <p className="text-[10px] text-muted-foreground">
-                  {formatCurrency(item.unit_price)}
-                  {item.selected_unit && <span className="ml-1">/ {item.selected_unit.unit_short || item.selected_unit.unit_name}</span>}
-                </p>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={item.unit_price}
+                    onChange={e => updateCartPrice(item.id, item.selected_unit?.id, parseFloat(e.target.value) || 0)}
+                    onClick={e => e.stopPropagation()}
+                    className="w-16 text-[10px] border border-border rounded px-1 py-0.5 focus:outline-none focus:border-blue-400 text-right bg-white"
+                  />
+                  {item.selected_unit && <span className="text-[10px] text-muted-foreground">/ {item.selected_unit.unit_short || item.selected_unit.unit_name}</span>}
+                </div>
               </div>
               <div className="flex items-center gap-1">
                 <button onClick={() => updateQty(item.id, item.selected_unit?.id, -1)} className="w-5 h-5 rounded-full bg-white border border-border flex items-center justify-center hover:bg-muted transition"><Minus className="w-2.5 h-2.5" /></button>
